@@ -1,0 +1,172 @@
+# This is a simple example illustrating how to build and test .NET Core project
+# with GitLab Continuous Integration / Continuous Delivery.
+
+# ### Specify the Docker image
+#
+# Instead of installing .NET Core SDK manually, a docker image is used
+# with already pre-installed .NET Core SDK.
+#
+# The 'latest' tag targets the latest available version of .NET Core SDK image.
+# If preferred, you can explicitly specify version of .NET Core (e.g. using '2.2-sdk' tag).
+#
+# See other available tags for .NET Core: https://hub.docker.com/r/microsoft/dotnet
+# Learn more about Docker tags: https://docs.docker.com/glossary/?term=tag
+# and the Docker itself: https://opensource.com/resources/what-docker
+# image: microsoft/dotnet:latest
+
+# ### Define variables
+#
+variables:
+  # 1) Name of directory where restore and build objects are stored.
+  OBJECTS_DIRECTORY: "obj"
+  # 2) Name of directory used for keeping restored dependencies.
+  NUGET_PACKAGES_DIRECTORY: ".nuget"
+  # 3) A relative path to the source code from project repository root.
+  # NOTE: Please edit this path so it matches the structure of your project!
+  SOURCE_CODE_PATH: "backend/*/"
+  IMAGE_APP: ${CI_REGISTRY_IMAGE}/app
+  NET_NAME: "gim-net"
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+
+services:
+  - docker:stable-dind
+
+# ### Define stage list
+#
+# In this example there are only two stages.
+# Initially, the project will be built and then tested.
+stages:
+  - build
+  - docker
+  - deploy
+
+# ### Define global cache rule
+#
+# Before building the project, all dependencies (e.g. third-party NuGet packages)
+# must be restored. Jobs on GitLab.com's Shared Runners are executed on autoscaled machines.
+#
+# Each machine is used only once (for security reasons) and after that is removed.
+# This means that, before every job, a dependency restore must be performed
+# because restored dependencies are removed along with machines. Fortunately,
+# GitLab provides cache mechanism with the aim of keeping restored dependencies
+# for other jobs.
+#
+# This example shows how to configure cache to pass over restored
+# dependencies for re-use.
+#
+# With global cache rule, cached dependencies will be downloaded before every job
+# and then unpacked to the paths as specified below.
+cache:
+  # Per-stage and per-branch caching.
+  key: "$CI_JOB_STAGE-$CI_COMMIT_REF_SLUG"
+  paths:
+    # Specify three paths that should be cached:
+    #
+    # 1) Main JSON file holding information about package dependency tree, packages versions,
+    # frameworks etc. It also holds information where to the dependencies were restored.
+    - "$SOURCE_CODE_PATH$OBJECTS_DIRECTORY/project.assets.json"
+    # 2) Other NuGet and MSBuild related files. Also needed.
+    - "$SOURCE_CODE_PATH$OBJECTS_DIRECTORY/*.csproj.nuget.*"
+    # 3) Path to the directory where restored dependencies are kept.
+    - "$NUGET_PACKAGES_DIRECTORY"
+  #
+  # 'pull-push' policy means that latest cache will be downloaded (if it exists)
+  # before executing the job, and a newer version will be uploaded afterwards.
+  # Such a setting saves time when there are no changes in referenced third-party
+  # packages.
+  #
+  # For example, if you run a pipeline with changes in your code,
+  # but with no changes within third-party packages which your project is using,
+  # then project restore will happen quickly as all required dependencies
+  # will already be there — unzipped from cache.
+  # 'pull-push' policy is the default cache policy, you do not have to specify it explicitly.
+  # policy: pull-push
+
+# ### Restore project dependencies
+#
+# NuGet packages by default are restored to '.nuget/packages' directory
+# in the user's home directory. That directory is out of scope of GitLab caching.
+#
+# To get around this, a custom path can be specified using the '--packages <PATH>' option
+# for 'dotnet restore' command. In this example, a temporary directory is created
+# in the root of project repository, so its content can be cached.
+#
+# Learn more about GitLab cache: https://docs.gitlab.com/ee/ci/caching/index.html
+
+build backend:
+  image: mcr.microsoft.com/dotnet/core/sdk:3.1
+  tags:
+    - in_docker
+  stage: build
+  script:
+    - "cd backend"
+    - "dotnet restore --packages $NUGET_PACKAGES_DIRECTORY"
+    - "dotnet build"
+    - "dotnet publish ./Gim.PriceParser.WebApi -c Release -o ../_build/_package/app"
+    - "rm -rf .nuget"
+  artifacts:
+    name: price-parcer-backend-${CI_PIPELINE_ID}
+    untracked: true
+    paths:
+      - _build/_package/
+
+build frontend:
+  image: node:11-slim
+  tags:
+    - in_docker
+  stage: build
+  script:
+    - cd frontend/price-parser
+    - npm install
+    - npm run build --production
+  cache:
+    paths:
+      - frontend/price-parser/node_modules/
+  artifacts:
+    name: price-parser-frontend-${CI_PIPELINE_ID}
+    untracked: true
+    paths:
+      - frontend/price-parser/build/
+
+docker:
+  image: docker:latest
+  tags:
+    - docker
+  stage: docker
+  script:
+    - mkdir _build/_package/app/wwwroot
+    - cp -r frontend/price-parser/build/* _build/_package/app/wwwroot
+    - cd _build
+    - docker login -u gitlab-ci-token -p ${CI_JOB_TOKEN} ${CI_REGISTRY}
+    - docker build -t ${IMAGE_APP}:${CI_PIPELINE_ID} .
+    - docker push ${IMAGE_APP}:${CI_PIPELINE_ID}
+
+deploy master:
+  stage: deploy
+  when: manual
+  tags:
+    - gim_test
+  only:
+    - master
+  script:
+    - "docker stop gim-price-parser || :"
+    - "docker rm gim-price-parser || :"
+    - "docker stop es || :"
+    - "docker rm es || :"
+    - "docker network rm ${NET_NAME} || :"
+    - docker network create ${NET_NAME}
+    - docker run -d --name gim-es -p 9200:9200 -p 9300:9300 --restart always --net ${NET_NAME} -e "discovery.type=single-node" docker.elastic.co/elasticsearch/elasticsearch:7.5.2
+    - docker run -d --name gim-mongo -p -p 27017:27017 --restart always --net ${NET_NAME} -e MONGO_INITDB_ROOT_USERNAME=admin -e MONGO_INITDB_ROOT_PASSWORD=7j71pm4fw517vj9 mongo:4
+    - docker login -u gitlab-ci-token -p ${CI_JOB_TOKEN} ${CI_REGISTRY}
+    - docker run -d --name gim-price-parser -p 2080:80 --restart always --net ${NET_NAME} ${IMAGE_APP}:${CI_PIPELINE_ID}
+# deploy second:
+#   stage: deploy
+#   when: manual
+#   tags:
+#     - gim_test
+#   script:
+#     - docker login -u gitlab-ci-token -p ${CI_JOB_TOKEN} ${CI_REGISTRY}
+#     - "docker stop gim-price-parser-2 || :"
+#     - "docker rm gim-price-parser-2 || :"
+#     - docker run --name gim-price-parser-2 --restart always -d -p 3080:80 ${IMAGE_APP}:${CI_PIPELINE_ID}

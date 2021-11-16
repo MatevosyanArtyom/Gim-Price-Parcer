@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyVersion>1.0.0.45</AssemblyVersion>
+    <FileVersion>1.0.0.45</FileVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AutoMapper" Version="10.1.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="5.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Gim.PriceParser.Bll.Common\Gim.PriceParser.Bll.Common.csproj" />
+    <ProjectReference Include="..\Gim.PriceParser.Bll.Search\Gim.PriceParser.Bll.Search.csproj" />
+    <ProjectReference Include="..\Gim.PriceParser.Dal.Common\Gim.PriceParser.Dal.Common.csproj" />
+  </ItemGroup>
+
+</Project>

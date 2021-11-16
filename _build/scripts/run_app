@@ -1,0 +1,6 @@
+#!/bin/bash
+
+set -e
+
+echo "starting application"
+(cd app && exec dotnet Gim.PriceParser.WebApi.dll)

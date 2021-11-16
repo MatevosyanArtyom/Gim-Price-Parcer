@@ -1,0 +1,22 @@
+{
+    "extends": [
+        "eslint:recommended",
+        "react-app"
+    ],
+    "plugins": [
+        "react-hooks"
+    ],
+    "rules": {
+        "jsx-quotes":"warn",
+        "semi": [
+            "warn",
+            "never"
+        ],
+        "quotes": [
+            "warn",
+            "single"
+        ],
+        "react-hooks/rules-of-hooks": "error",
+        "react-hooks/exhaustive-deps": "warn"
+    }
+}

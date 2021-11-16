@@ -1,0 +1,9 @@
+#!/bin/bash
+
+sh run_deps
+
+if [ $# -eq 0 ]; then
+	sh run_app
+else
+	sh $@
+fi
